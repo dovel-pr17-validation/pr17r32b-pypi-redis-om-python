@@ -1,0 +1,85 @@
+NAME := aredis_om
+SYNC_NAME := redis_om
+INSTALL_STAMP := .install.stamp
+UV := $(shell command -v uv 2> /dev/null)
+REDIS_OM_URL ?= "redis://localhost:6380?decode_responses=True"
+
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help:
+	@echo "Please use 'make <target>' where <target> is one of"
+	@echo ""
+	@echo "  install     install packages and prepare environment"
+	@echo "  clean       remove all temporary files"
+	@echo "  lint        run the code linters"
+	@echo "  format      reformat code"
+	@echo "  test        run all the tests against redislabs/redisearch:edge"
+	@echo "  test_oss    run all the tests against redis:latest"
+	@echo "  redis       start a Redis instance with Docker"
+	@echo "  sync        generate modules redis_om, tests_sync from aredis_om, tests respectively"
+	@echo "  dist        build a redis-om package"
+	@echo "  docs        start the docs server locally for preview"
+	@echo "  all         equivalent to \"make lint format test\""
+	@echo ""
+	@echo "Check the Makefile to know exactly what each target is doing."
+
+install: $(INSTALL_STAMP)
+$(INSTALL_STAMP): pyproject.toml
+	@if [ -z $(UV) ]; then echo "uv could not be found. See https://docs.astral.sh/uv/"; exit 2; fi
+	$(UV) sync
+	touch $(INSTALL_STAMP)
+
+.PHONY: clean
+clean:
+	find . -type d -name "__pycache__" | xargs rm -rf {};
+	rm -rf $(INSTALL_STAMP) .coverage .mypy_cache
+	rm -rf build
+	rm -rf dist
+	rm -rf redis_om
+	rm -rf tests_sync
+	docker compose down
+
+
+.PHONY: dist
+dist: $(INSTALL_STAMP) clean sync
+	$(UV) build
+
+.PHONY: sync
+sync: $(INSTALL_STAMP)
+	$(UV) run python make_sync.py
+
+.PHONY: lint
+lint: $(INSTALL_STAMP) sync
+	$(UV) run ruff check ./tests/ $(NAME) $(SYNC_NAME)
+	$(UV) run ruff format --check ./tests/ $(NAME) $(SYNC_NAME)
+	$(UV) run mypy ./tests/ --ignore-missing-imports --exclude migrate.py --exclude _compat\.py$$
+	$(UV) run bandit -r $(NAME) $(SYNC_NAME) -s B608
+
+.PHONY: format
+format: $(INSTALL_STAMP) sync
+	$(UV) run ruff check --fix ./tests/ $(NAME) $(SYNC_NAME)
+	$(UV) run ruff format ./tests/ $(NAME) $(SYNC_NAME)
+
+.PHONY: test
+test: $(INSTALL_STAMP) sync redis
+	REDIS_OM_URL="$(REDIS_OM_URL)" $(UV) run pytest -n auto -vv ./tests/ ./tests_sync/ --cov-report term-missing --cov $(NAME) $(SYNC_NAME)
+	docker compose down
+
+.PHONY: test_oss
+test_oss: $(INSTALL_STAMP) sync redis
+	# Specifically tests against a local OSS Redis instance via
+	# docker-compose.yml. Do not use this for CI testing, where we should
+	# instead have a matrix of Docker images.
+	REDIS_OM_URL="redis://localhost:6381?decode_responses=True" $(UV) run pytest -n auto -vv ./tests/ ./tests_sync/ --cov-report term-missing --cov $(NAME)
+
+.PHONY: redis
+redis:
+	docker compose up -d
+
+.PHONY: docs
+docs: $(INSTALL_STAMP)
+	$(UV) run mkdocs serve
+
+.PHONY: all
+all: lint format test
