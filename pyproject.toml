@@ -69,7 +69,7 @@ dev = [
     "email-validator>=2.0.0",
     "tox>=4.14.1",
     "tox-pyenv>=1.1.0",
-    "codespell>=2.2.0",
+    "codespell>=2.4.3",
     "pre-commit>=4.3.0; python_version >= '3.10'",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.1",
